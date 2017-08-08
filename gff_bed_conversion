@@ -1,0 +1,19 @@
+#command lines used for the conversion of gff files from : ftp://ftp.solgenomics.net/tomato_genome/annotation/
+
+working directory: /Users/Jihed/Tomato_genome_files/ITAG3.2_release
+
+#creation of a bed file containing the repeats sequences without the ch00. Columns : chromosome number, start, end. file is sorted 1,10,11,12,2 ... 9 
+
+#for TE element, I extracted the information of repeat sequence annotation
+
+grep -v ^# /Users/Jihed/Tomato_genome_files/ITAG3.2_release/ITAG3.0_REPET_repeats_agressive.gff | grep -v SL3.0ch00 | awk '{OFS="\t"; print $1, $4-1, $5}' | sed "s/SL3.0ch0*//" | sortBed -i stdin | mergeBed -i stdin > /Users/Jihed/Tomato_genome_files/ITAG3.2_TE.bed
+
+#Annotation of genes:
+
+awk '{if ($3 == "gene") print }' /Users/Jihed/Tomato_genome_files/ITAG3.2_release/ITAG3.2_gene_models.gff | sed "s/;/   /" | sed "s/ID=gene://" | awk '{OFS="\t"; print $1, $4-1, $5, $9 $6, $7}' |  sed "s/SL3.0ch0//"  | sed "s/SL3.0ch//"  |  grep -v ^0 - | bedtools sort -i  >/Users/Jihed/Tomato_genome_files/SL3.00_gene.bed
+
+
+awk '{if ($3 == "exon") print }' /Users/Jihed/Tomato_genome_files/ITAG3.2_release/ITAG3.2_gene_models.gff | sed "s/;/   /" | sed "s/ID=gene://" | awk '{OFS="\t"; print $1, $4-1, $5, $9 $6, $7}'|  sed "s/SL3.0ch0//"  | sed "s/SL3.0ch//"  |  grep -v ^0 -  |sort -i  >/Users/Jihed/Tomato_genome_files/SL3.00_exon.bed
+sortBed -i SL3.00_exon.bed #added sortBed on a second line as add stdin at the end did not work on the last command line
+
+
