@@ -1,0 +1,74 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+
+###################################################
+#
+# count the numbers of features in each class (genic intergenic etc)
+#
+# ./classify.pl [list feature files] 
+#   => outputs pie charts
+#
+###################################################
+
+my $genic_fl = "~/Users/Jihed/Tomato_genome_files/SL3.00_gene.bed";
+my $prom_fl = "~/Users/Jihed/Tomato_genome_files/SL3.00_promoter";
+my $exon_fl = "~/Users/Jihed/Tomato_genome_files/SL3.00_exon.bed";
+my $flank_fl = "~/Users/Jihed/Tomato_genome_files/SL3.00_flank5kb.bed";
+my $TE_fl = "~/Users/Jihed/Tomato_genome_files/ITAG3.2_TE.bed";
+my $tissue;
+my $unit = 1000; # please change: for Mbp: 1000000, for kb: 1000
+
+my $list_file = $ARGV[0];
+open( my $lists, $list_file ) or die "Can't open '$list_file': $!";;
+
+my $i = 0;
+
+while( my $line = <$lists> ){
+	chomp $line;
+
+my @file = split /\t/, $line;
+push( my @file_list, $file_a[0] );
+my $file_count_line = `wc -l $file[1] `;	# number of peaks in  file A
+my @file_count =  split /\s+/, $file_count_line;
+$file_count[0] number of peaks in file A
+
+	my $genic = `intersectBed -a $file[1] -b $genic_fl | sortBed -i stdin | mergeBed -i stdin | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+    
+	my $intergenic = `subtractBed -a $file[1] -b $genic_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+
+	my $prom = `intersectBed -a $file[1] -b $prom_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+    
+	my $exon = `intersectBed -a $file[1] -b $exon_fl | subtractBed -a stdin -b $prom_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+    
+	my $intron = `intersectBed -a $file[1] -b $genic_fl | subtractBed -a stdin -b $prom_fl | subtractBed -a stdin -b $exon_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+
+	my $TE = `intersectBed -a $file[1] -b $TE_fl | subtractBed -a stdin -b $genic_fl | subtractBed -a stdin -b $prom_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+
+	my $flank = `intersectBed -a $file[1] -b $flank_fl | subtractBed -a stdin -b $prom_fl | subtractBed -a stdin -b $TE_fl | subtractBed -a stdin -b $genic_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+    
+	my $dist = `subtractBed -a $file[1] -b $flank_fl | subtractBed -a stdin -b $prom_fl | subtractBed-a stdin -b $TE_fl | bedtools subtract -a stdin -b $genic_fl | awk -F'\\t' 'BEGIN{SUM=0}{ SUM+=\$3-\$2 }END{printf "%0.f", SUM/$unit}'`;
+
+	if($file[2]){
+		$tissue = $file[2];
+	}else{
+		$tissue = "genome";
+	}
+
+	chomp ($genic, $intergenic, $prom, $exon, $intron, $TE, $flank, $dist, $file[0], $tissue);
+    
+	my @args = ($genic, $intergenic, $prom, $exon, $intron, $TE, $flank, $dist, $file[0], $tissue);
+    
+#	print "Rscript dist_pie_160323.r ", join (" ", @args), "\n";
+
+	system("Rscript", "script/dist_pie_161021.r", "$genic", "$intergenic", "$prom", "$exon", "$intron", "$TE", "$flank", "$dist", "$file[0]", "$tissue");
+    
+	print "$file[0]\t$tissue\n";
+	$i++;
+}
+
+close $lists;
+
+
