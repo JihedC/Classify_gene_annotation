@@ -15,5 +15,11 @@ awk '{if ($3 == "gene") print }' /Users/Jihed/Tomato_genome_files/ITAG3.2_releas
 
 awk '{if ($3 == "exon") print }' /Users/Jihed/Tomato_genome_files/ITAG3.2_release/ITAG3.2_gene_models.gff | sed "s/;/   /" | sed "s/ID=gene://" | awk '{OFS="\t"; print $1, $4-1, $5, $9 $6, $7}'|  sed "s/SL3.0ch0//"  | sed "s/SL3.0ch//"  |  grep -v ^0 -  |sort -i  >/Users/Jihed/Tomato_genome_files/SL3.00_exon.bed
 sortBed -i SL3.00_exon.bed #added sortBed on a second line as add stdin at the end did not work on the last command line
+#sort peaks.bed files
+sortBed -i peaks.bed > sorted_peaks.bed
 
+#Count sequence length of chromosome
+awk '/^>/ {if (seqlen){print seqlen}; print ;seqlen=0;next; } { seqlen += length($0)}END{print seqlen}' S_lycopersicum_chromosomes.3.00.fa
+#creation of txt tab separated file with same order as the 'SL3.00_gene.bed'
 
+flankBed -b 5000 -i SL3.00_gene.bed -g SL3.0_length.txt  | subtractBed -a stdin -b SL3.00_gene.bed | sortBed -i stdin | merge -i stdin > SL3.0_flank5kb.bed
