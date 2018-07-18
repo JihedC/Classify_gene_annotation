@@ -1,0 +1,138 @@
+#!/bin/bash
+#PBS -S /bin/bash
+#PBS -lnodes=1:ppn=16
+#PBS -lwalltime=100:00:00
+	# if the script does not finish in 8hrs, give more hours for calculations
+	# (up to 120:00:00 for 5 days)
+
+#bowtie2 version 2.2.9
+#samtools version 1.3
+#foo.py script is required
+#multi_unique_extract_pairend.r is required
+###modules required
+module load mpicopy
+
+module load openmpi
+
+module load bowtie/2.2.4
+
+module load samtools
+
+###variables paths for files for input and output directory
+
+INDEX="genomes/index/"
+RAW="DMC1/DMC1_ChIP/analysis/"
+SAM="DMC1/DMC1_ChIP/analysis/sam/"
+BAM="DMC1/DMC1_ChIP/analysis/bam/"
+SCRIPT="scripts/"
+
+###Copy input files to the scratch
+#Copy input data to scratch and create output directory
+cp "${HOME}"/"${RAW}"*.gz "${TMPDIR}"/
+#mkdir "$TMPDIR"/output_dir
+#mkdir "${TMPDIR}"/work/
+
+#copy references files to the scratch
+#mkdir "${TMPDIR}"/index/
+cp -r "${HOME}"/"${INDEX}" "${TMPDIR}"/index/
+
+#copy required scripts to scratch
+cp  "${HOME}"/"${SCRIPT}"* "${TMPDIR}"/
+
+###Create the list of files
+#Chip1_S_DA10_1.fq.gz Chip1_S_DA10_2.fq.gz Chip2_S_DA11_1.fq.gz Chip2_S_DA11_2.fq.gz \
+#Chip3_S_DA12_1.fq.gz Chip3_S_DA12_2.fq.gz Chip4_S_DA19_1.fq.gz Chip4_S_DA19_2.fq.gz\
+#Chip5_S_DA20_1.fq.gz Chip5_S_DA20_2.fq.gz Chip6_S_DA21_1.fq.gz Chip6_S_DA21_2.fq.gz
+
+
+for i in Chip1_S_DA10_1.fq.gz Chip1_S_DA10_2.fq.gz Chip2_S_DA11_1.fq.gz Chip2_S_DA11_2.fq.gz Chip3_S_DA12_1.fq.gz Chip3_S_DA12_2.fq.gz Chip4_S_DA19_1.fq.gz Chip4_S_DA19_2.fq.gz Chip5_S_DA20_1.fq.gz Chip5_S_DA20_2.fq.gz Chip6_S_DA21_1.fq.gz Chip6_S_DA21_2.fq.gz
+do
+### Read alignement to tomato genome using bowtie2
+
+	# align deduplicated reads to reference genome
+	bowtie2 --very-sensitive --no-discordant --no-mixed --phred33-quals -p 16 -k 10 "${TMPDIR}"/index/tomato_3.00_inx -1 "${TMPDIR}"/"${i}"_1.fq.gz -2 "${TMPDIR}"/"${i}"_2.fq.gz	-S "${TMPDIR}"/${i}.sam >> ${i}_stats 2>&1
+
+
+### convert bam/sam and filter for unmapped reads
+	samtools view -bS  "${TMPDIR}"/"${i}".sam > "${TMPDIR}"/"${i}".bam
+#generates the bam file from sam file
+	samtools view -h -F 4 "${TMPDIR}"/"${i}".bam > "${TMPDIR}"/"${i}".bam
+# -h : include header in SAM output
+# -F : only include reads with none of the FLAGS in INT present \
+# here INT = 4, removes all the reads unmapped
+	samtools view -h -o "${TMPDIR}"/"${i}".bam > "${TMPDIR}"/"${i}".sam
+# overwrite the previous bam file with filtered sam
+
+### allow a maximum of 2 mismatches in alignment ([^0-9] matches characters not in the range of 0 to 9)
+	samtools view -Sh ${i}.sam | grep -e "^@" -e "XM:i:[012][^0-9]" > ${i}_lowmiss.sam
+# [012][^0-9] : 0 or 1 or 2 mismatches, excluding all number that could come after with the [^0-9]
+# 'XM:' is an element of the sam file indicating the mismatches number
+	sed -n 1,15p ${i}_lowmiss.sam > ${i}_lowmiss_multi_header.sam
+#Don't know what is -n 1,9p, may be generates only headers that is used later
+#1,9p seems to indicate that the header would contain 9 lines, which is not enough for tomato, needed to chnage it to 15
+	samtools view -S -f 0x02 ${i}_lowmiss.sam | grep -v "XS:i:" | "${SCRIPT}"/foo.py > ${i}_lowmiss_unique.txt
+# '-f 0x02' only include the reads that are properly mapped in pair
+# 'grep -v "XS:i:' search that are not matching with "XS:i:" (unique mapping)
+	cat ${i}_lowmiss_multi_header.sam ${i}_lowmiss_unique.txt > ${i}_lowmiss_unique_ori.sam
+#concatenate both files
+
+
+### bowtie2 MAPQ scores >=42 correspond to uniquely mapping reads
+	samtools view -h -q 42 ${i}_lowmiss_unique_ori.sam > ${i}_lowmiss_unique.sam
+# -q 42 include only reads with mapping quality >= 42
+	samtools view -bS -o ${i}_lowmiss_unique.bam ${i}_lowmiss_unique.sam
+#convert sam to bam again
+	samtools sort  ${i}_lowmiss_unique.bam -o ${i}_lowmiss_unique_sort.bam
+# sort bam file byt leftmost coordinates
+	samtools index ${i}_mapped_lowmiss_unique_sort.bam
+# index a coordinate sorted bam file for fast random access
+
+### identify and filter multiply mapping reads, and combine with uniquely mapping reads ("both")
+	samtools view -S -f 0x02 ${i}_mapped_lowmiss.sam | grep "XS:i:"| "${SCRIPT}"foo.py > ${i}_mapped_lowmiss_multi.txt
+# '-f 0x02' only include the reads that are properly mapped in pair
+# 'grep -v "XS:i:' search that are matching with "XS:i:" (multiple mapping)
+	cat ${i}_mapped_lowmiss_multi_header.sam ${i}_mapped_lowmiss_multi.txt > ${i}_mapped_lowmiss_multi.sam
+# concatenate only header with the paired-reads aligning multiple times
+	samtools view -h -q 10 ${i}_mapped_lowmiss_multi.sam > ${i}_mapped_lowmiss_multi_fq10.sam
+# -q 10 include only reads with mapping quality >= 10, why is the quality only 10 ?
+	samtools view -S -f 0x02 ${i}_mapped_lowmiss_multi_fq10.sam | grep "XS:i:" | python "${SCRIPT}"foo.py > ${i}_mapped_lowmiss_multi_fq10.txt
+# same as before but this time only for read quality of 10
+	wc -l ${i}_mapped_lowmiss_multi_fq10.txt >> ${i}_mdim.stats 2>&1
+	Rscript "${SCRIPT}"multi_unique_extract_pairend.r ${i}_mdim.stats ${i}_mapped_lowmiss_multi_fq10.txt ${i}_MU.RData ${i}_mapped_lowmiss_multi_fq10_unique.txt
+#the pipeline here takes the multiple aligned reads and pipe it into Rscript to use
+#the total mapping reads are locaed in the *_mapped_lowmiss.sam
+#If XS is present the read is mapping multiple time
+#       # args[1] is the summary stats file for multi_fq10.sam lines
+#       # args[2] is the input sam file multi_fq10.sam
+#       # args[3] is halfway saved the .RData file for multi-unique
+#       # args[4] is the final output sam file without header.
+#       # args[5] skip number, is the total lines of your header in sam file
+#       # args[6] number of lines each time you want to read in R(this is trying to avoid big data problem.)  # 20 000 gave index error but 2 000 works fine..
+#       # args[7] total columns in sam file
+#       # args[8] columns for the tag,
+#       # note: for single end, args[7] samfile has 20 columns
+#       # for pair-end, args[7] is 21.
+#       # args[8] for single end is 15; pair-end is 16 instead.
+
+#R script rank the mutliple aligning reads and either choose the top one or random reads
+	cat ${i}_mapped_lowmiss_multi_header.sam  ${i}_mapped_lowmiss_multi_fq10_unique.txt > ${i}_mapped_lowmiss_multi_fq10_unique.sam
+
+	rm ${i}_mapped_lowmiss_multi.txt ${i}_mapped_lowmiss_multi_fq10.txt ${i}_mapped_lowmiss_multi_fq10_unique.txt
+# remove unnecessary files
+	samtools view -bS -o ${i}_mapped_lowmiss_multi_fq10_unique.bam ${i}_mapped_lowmiss_multi_fq10_unique.sam
+	samtools sort ${i}_mapped_lowmiss_multi_fq10_unique.bam -o ${i}_mapped_lowmiss_multi_fq10_unique_sort.bam
+	samtools index ${i}_mapped_lowmiss_multi_fq10_unique_sort.bam
+	samtools merge ${i}_mapped_lowmiss_unique_both.bam ${i}_mapped_lowmiss_unique_sort.bam ${i}_mapped_lowmiss_multi_fq10_unique_sort.bam
+# merge 2 sorted bam files
+	samtools sort ${i}_mapped_lowmiss_unique_both.bam -o ${i}_mapped_lowmiss_unique_both_sort.bam
+	samtools index ${i}_mapped_lowmiss_unique_both_sort.bam
+
+### remove no longer required .txt and .sam files
+  rm ${i}_mapped_lowmiss_unique.txt ${i}_mapped_lowmiss_multi.txt ${i}_mapped_lowmiss_multi_fq10.txt ${i}_mapped_lowmiss_multi_fq10_unique.txt
+  rm ${i}.sam ${i}_mapped.sam ${i}_mapped_lowmiss.sam ${i}_mapped_lowmiss_multi_header.sam ${i}_mapped_lowmiss_unique_ori.sam ${i}_mapped_lowmiss_unique.sam ${i}_mapped_lowmiss_multi.sam ${i}_mapped_lowmiss_multi_fq10.sam ${i}_mapped_lowmiss_multi_fq10_unique.sam
+done
+
+
+###Copy output files to the $HOME directory
+
+cp -r "${TMPDIR}"/*.bam "${HOME}"/"${BAM}"
